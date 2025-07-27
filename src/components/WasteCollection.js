@@ -65,7 +65,7 @@ const WasteCollectionApp = () => {
     const allPoints = [start, ...points];
     const n = allPoints.length;
 
-    // Create a distance matrix
+    //distance matrix
     const dist = Array(n)
       .fill()
       .map(() => Array(n).fill(Infinity));
@@ -82,49 +82,70 @@ const WasteCollectionApp = () => {
       }
     }
 
-    // DFS recursive function to explore all paths
-    const dfs = (currentNode, visited, path, cost) => {
-      // Base case: if all nodes are visited, return cost + distance to start
-      if (visited.size === n) {
-        const returnCost = dist[currentNode][0]; // Return to start
-        if (returnCost === Infinity) return { cost: Infinity, path: null }; // No valid path back
-        return { cost: cost + returnCost, path: [...path, start] };
-      }
-
-      let minCost = Infinity;
-      let bestPath = null;
-
-      // Try all unvisited nodes
-      for (let nextNode = 0; nextNode < n; nextNode++) {
-        if (!visited.has(nextNode)) {
-          visited.add(nextNode);
-          const { cost: newCost, path: newPath } = dfs(
-            nextNode,
-            visited,
-            [...path, allPoints[nextNode]],
-            cost + dist[currentNode][nextNode]
-          );
-          if (newCost < minCost) {
-            minCost = newCost;
-            bestPath = newPath;
-          }
-          visited.delete(nextNode); // Backtrack
-        }
-      }
-
-      return { cost: minCost, path: bestPath };
+    // Memoization table: memo[mask][currentNode] = {cost, path}
+    // mask represents which nodes have been visited (bitmask)
+    const memo = new Map();
+    
+    const getMemoKey = (currentNode, visitedMask) => {
+        return `${currentNode}_${visitedMask}`;
     };
 
-    // Start DFS from the initial node (start)
-    const visited = new Set([0]);
-    const result = dfs(0, visited, [start], 0);
+    const dpTSP = (currentNode, visitedMask) => {
+        const memoKey = getMemoKey(currentNode, visitedMask);
+        
+        if (memo.has(memoKey)) {
+            return memo.get(memoKey);
+        }
+        
+        // Base case: if all nodes are visited
+        const allVisited = (1 << n) - 1;
+        if (visitedMask === allVisited) {
+            const returnCost = dist[currentNode][0];
+            if (returnCost === Infinity) {
+                const result = { cost: Infinity, path: null };
+                memo.set(memoKey, result);
+                return result;
+            }
+            const result = { cost: returnCost, path: [allPoints[currentNode], allPoints[0]] };
+            memo.set(memoKey, result);
+            return result;
+        }
 
-    if (result.path === null) {
-      return "No valid path found";
+        let minCost = Infinity;
+        let bestPath = null;
+
+        // Trying all unvisited nodes
+        for (let nextNode = 0; nextNode < n; nextNode++) {
+            if (!(visitedMask & (1 << nextNode))) {
+                const newVisitedMask = visitedMask | (1 << nextNode);
+                const edgeCost = dist[currentNode][nextNode];
+                
+                if (edgeCost !== Infinity) {
+                    const subResult = dpTSP(nextNode, newVisitedMask);
+                    const totalCost = edgeCost + subResult.cost;
+                    
+                    if (totalCost < minCost && subResult.path !== null) {
+                        minCost = totalCost;
+                        bestPath = [allPoints[currentNode], ...subResult.path];
+                    }
+                }
+            }
+        }
+
+        const result = { cost: minCost, path: bestPath };
+        memo.set(memoKey, result);
+        return result;
+    };
+
+    const initialMask = 1;
+    const result = dpTSP(0, initialMask);
+
+    if (result.path === null || result.cost === Infinity) {
+        return "No valid path found";
     }
 
     return result.path.map((loc) => locations.find((l) => l.name === loc));
-  };
+};
 
   return (
     <div className="min-h-screen flex flex-col justify-center items-center p-4 bg-gray-100">
@@ -202,7 +223,6 @@ const WasteCollectionApp = () => {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
             {shortestPath.map((location, idx) => {
-              // Skip rendering the last marker as it's the same as the first (DMC)
               if (
                 idx === shortestPath.length - 1 &&
                 idx !== 0 &&
