@@ -36,7 +36,7 @@ const startIcon = new L.Icon({
 
 const WasteCollectionApp = () => {
   const [selectedLocations, setSelectedLocations] = useState([]);
-  const [shortestPath, setShortestPath] = useState([]);
+  const [route, setroute] = useState({ path: [], cost: 0 });
   const mapRef = useRef(null);
 
   const handleLocationSelect = (location) => {
@@ -49,103 +49,147 @@ const WasteCollectionApp = () => {
     }
   };
 
-  const findShortestPath = () => {
+  // Dijkstra: finds shortest distance from 'start' to all nodes
+  const dijkstra = (adjacencyList, start) => {
+    const distances = {};
+    const visited = new Set();
+    const pq = new Map();
+
+    Object.keys(adjacencyList).forEach((node) => {
+      distances[node] = Infinity;
+    });
+    distances[start] = 0;
+    pq.set(start, 0);
+
+    while (pq.size > 0) {
+
+      let [currentNode, currentDist] = [...pq.entries()].reduce((a, b) =>
+        a[1] < b[1] ? a : b
+      );
+      pq.delete(currentNode);
+      visited.add(currentNode);
+
+      for (let neighbor of adjacencyList[currentNode]) {
+        if (visited.has(neighbor.location)) continue;
+
+        let newDist = currentDist + neighbor.distance;
+        if (newDist < distances[neighbor.location]) {
+          distances[neighbor.location] = newDist;
+          pq.set(neighbor.location, newDist);
+        }
+      }
+    }
+
+    return distances;
+  };
+
+
+  const findroute = () => {
     if (selectedLocations.length > 0) {
-      const path = calculateShortestPath(
+      const path = calculateroute(
         "DMC",
         selectedLocations.map((loc) => loc.name)
       );
-      setShortestPath(path);
+      setroute(path);
       mapRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   };
 
 
-  const calculateShortestPath = (start, points) => {
+  const calculateroute = (start, points) => {
     const allPoints = [start, ...points];
     const n = allPoints.length;
 
-    //distance matrix
-    const dist = Array(n)
-      .fill()
-      .map(() => Array(n).fill(Infinity));
+    // distance matrix using Dijkstra
+    const dist = Array(n).fill().map(() => Array(n).fill(Infinity));
+
     for (let i = 0; i < n; i++) {
+      const fromNode = allPoints[i];
+      const shortestFromI = dijkstra(adjacencyList, fromNode);
+
       for (let j = 0; j < n; j++) {
-        if (i !== j) {
-          const edge = adjacencyList[allPoints[i]].find(
-            (e) => e.location === allPoints[j]
-          );
-          if (edge) {
-            dist[i][j] = edge.distance;
-          }
+        const toNode = allPoints[j];
+        if (i !== j && shortestFromI[toNode] !== undefined) {
+          dist[i][j] = shortestFromI[toNode];
         }
       }
     }
 
+
     // Memoization table: memo[mask][currentNode] = {cost, path}
     // mask represents which nodes have been visited (bitmask)
     const memo = new Map();
-    
+
     const getMemoKey = (currentNode, visitedMask) => {
-        return `${currentNode}_${visitedMask}`;
+      return `${currentNode}_${visitedMask}`;
     };
 
     const dpTSP = (currentNode, visitedMask) => {
-        const memoKey = getMemoKey(currentNode, visitedMask);
-        
-        if (memo.has(memoKey)) {
-            return memo.get(memoKey);
-        }
-        
-        // Base case: if all nodes are visited
-        const allVisited = (1 << n) - 1;
-        if (visitedMask === allVisited) {
-            const returnCost = dist[currentNode][0];
-            if (returnCost === Infinity) {
-                const result = { cost: Infinity, path: null };
-                memo.set(memoKey, result);
-                return result;
-            }
-            const result = { cost: returnCost, path: [allPoints[currentNode], allPoints[0]] };
-            memo.set(memoKey, result);
-            return result;
-        }
+      const memoKey = getMemoKey(currentNode, visitedMask);
 
-        let minCost = Infinity;
-        let bestPath = null;
+      if (memo.has(memoKey)) {
+        return memo.get(memoKey);
+      }
 
-        // Trying all unvisited nodes
-        for (let nextNode = 0; nextNode < n; nextNode++) {
-            if (!(visitedMask & (1 << nextNode))) {
-                const newVisitedMask = visitedMask | (1 << nextNode);
-                const edgeCost = dist[currentNode][nextNode];
-                
-                if (edgeCost !== Infinity) {
-                    const subResult = dpTSP(nextNode, newVisitedMask);
-                    const totalCost = edgeCost + subResult.cost;
-                    
-                    if (totalCost < minCost && subResult.path !== null) {
-                        minCost = totalCost;
-                        bestPath = [allPoints[currentNode], ...subResult.path];
-                    }
-                }
-            }
+      // Base case: if all nodes are visited
+      const allVisited = (1 << n) - 1;
+      if (visitedMask === allVisited) {
+        const returnCost = dist[currentNode][0];
+        if (returnCost === Infinity) {
+          const result = { cost: Infinity, path: null };
+          memo.set(memoKey, result);
+          return result;
         }
+        // const result = { cost: returnCost, path: [allPoints[currentNode], allPoints[0]] };
+        const result = {
+          cost: returnCost,
+          path: [locations.find(l => l.name === allPoints[currentNode]), locations.find(l => l.name === allPoints[0])]
+        };
 
-        const result = { cost: minCost, path: bestPath };
         memo.set(memoKey, result);
         return result;
+      }
+
+      let minCost = Infinity;
+      let bestPath = null;
+
+      // Trying all unvisited nodes
+      for (let nextNode = 0; nextNode < n; nextNode++) {
+        if (!(visitedMask & (1 << nextNode))) {
+          const newVisitedMask = visitedMask | (1 << nextNode);
+          const edgeCost = dist[currentNode][nextNode];
+
+          if (edgeCost !== Infinity) {
+            const subResult = dpTSP(nextNode, newVisitedMask);
+            const totalCost = edgeCost + subResult.cost;
+
+            if (totalCost < minCost && subResult.path !== null) {
+              minCost = totalCost;
+              // bestPath = [allPoints[currentNode], ...subResult.path];
+              bestPath = [
+                locations.find(l => l.name === allPoints[currentNode]),
+                ...subResult.path
+              ];
+
+            }
+          }
+        }
+      }
+
+      const result = { cost: minCost, path: bestPath };
+      memo.set(memoKey, result);
+      return result;
     };
 
     const initialMask = 1;
     const result = dpTSP(0, initialMask);
 
     if (result.path === null || result.cost === Infinity) {
-        return "No valid path found";
+      return "No valid path found";
     }
 
-    return result.path.map((loc) => locations.find((l) => l.name === loc));
-};
+    return result;
+  };
 
   return (
     <div className="min-h-screen flex flex-col justify-center items-center p-4 bg-gray-100">
@@ -186,7 +230,7 @@ const WasteCollectionApp = () => {
 
           <div className="flex gap-4">
             <button
-              onClick={findShortestPath}
+              onClick={findroute}
               className="mt-4 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
             >
               Find Shortest Path
@@ -210,6 +254,16 @@ const WasteCollectionApp = () => {
               </div>
             </div>
           )}
+
+          {route.path && (
+            <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+              <p className="text-sm font-semibold text-blue-800 mb-2">Total Distance: {route.cost} km</p>
+              <p className="text-sm">
+                Visiting Order: {route.path.map((loc) => loc.name).join(" → ")}
+              </p>
+            </div>
+          )}
+
         </div>
 
         <div ref={mapRef} className="border-sky-500">
@@ -222,11 +276,11 @@ const WasteCollectionApp = () => {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
-            {shortestPath.map((location, idx) => {
+            {route.path.map((location, idx) => {
               if (
-                idx === shortestPath.length - 1 &&
+                idx === route.path.length - 1 &&
                 idx !== 0 &&
-                location.id === shortestPath[0].id
+                location.id === route.path[0].id
               ) {
                 return null;
               }
@@ -236,12 +290,14 @@ const WasteCollectionApp = () => {
                   position={location.coordinates}
                   icon={idx === 0 ? startIcon : new L.Icon.Default()}
                 >
-                  <Tooltip permanent>{location.name}</Tooltip>
+                  <Tooltip permanent>
+                    {idx + 1}. {location.name}
+                  </Tooltip>
                 </Marker>
               );
             })}
             <Polyline
-              positions={shortestPath.map((loc) => loc.coordinates)}
+              positions={route.path.map((loc) => loc.coordinates)}
               color="red"
             />
           </MapContainer>
